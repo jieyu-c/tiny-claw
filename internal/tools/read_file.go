@@ -3,11 +3,23 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"tiny-claw/internal/schema"
 )
 
+const maxLen = 5000;
+
 type ReadFileTool struct {
 	workDir string
+}
+
+func NewReadFileTool(workDir string) *ReadFileTool {
+	return &ReadFileTool{
+		workDir: workDir,
+	}
 }
 
 var _ BaseTool = new(ReadFileTool)
@@ -39,7 +51,28 @@ type readFileArgs struct {
 
 // Exec implements [BaseTool].
 func (r *ReadFileTool) Exec(ctx context.Context, args json.RawMessage) (string, error) {
-	panic("unimplemented")
+	var input readFileArgs
+	if err := json.Unmarshal(args, &input); err != nil {
+		return "", fmt.Errorf("参数解析失败， %w", err)
+	}
+	// 正式环境需要校验 ../../这种地址， 防止目录穿越
+	fullPath := filepath.Join(r.workDir, input.Path)
+
+	file, err := os.Open(fullPath)
+	if err != nil {
+		return "", fmt.Errorf("打开文件失败， %w", err)
+	}
+	defer file.Close()
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return "", fmt.Errorf("读取文件失败, %w", err)
+	}
+	if len(content) > maxLen {
+		content = content[:maxLen]
+	}
+
+	return string(content), err
+
 }
 
 // Name implements [BaseTool].

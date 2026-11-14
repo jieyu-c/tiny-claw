@@ -35,7 +35,7 @@ var _ Registry = new(registryImpl)
 // Exec implements [Registry].
 func (r *registryImpl) Exec(ctx context.Context, call *schema.ToolCall) (result schema.ToolResult) {
 	tool, exixts := r.tools[call.Name]
-	if exixts {
+	if !exixts {
 		errMsg := fmt.Sprintf("Error: 系统中不存在名为 '%s' 的工具。", call.Name)
 		return schema.ToolResult{
 			ToolCallID: call.ID,

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	engine2 "tiny-claw/internal/engine"
 	"tiny-claw/internal/provider"
 	"tiny-claw/internal/tools"
@@ -16,7 +17,8 @@ func main() {
 
 	// TODO 2. 注册工具
 	r := tools.NewRegistry()
-	//registry.Register(tools.NewBashTool())
+	workDir, _ := os.Getwd()
+	r.Registry(tools.NewReadFileTool(workDir))
 
 	// TODO 3. 初始化上下文
 	// ctx := context.NewManager(...)
@@ -24,8 +26,10 @@ func main() {
 	// TODO 4. 初始化执行引擎
 	engine := engine2.NewAgentEngine(p, r, "~", false)
 
+	prompt := "请调用工具读取一下当前工作区目录下 hello.txt 文件的内容，并用一句话向我总结它说了什么。"
+
 	// TODO 5. 开始执行
-	err := engine.Run(context.TODO(), "我在北京， 帮我查查北京今天天气如何？")
+	err := engine.Run(context.TODO(), prompt)
 
 	if err != nil {
 		log.Fatalf("引擎运行崩溃: %v", err)
