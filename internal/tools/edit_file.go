@@ -4,7 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
+	"os"
+	"path/filepath"
 	"strings"
 	"tiny-claw/internal/schema"
 )
@@ -14,6 +15,12 @@ type EditFileTool struct {
 }
 
 var _ BaseTool = new(EditFileTool)
+
+func NewEditFileTool(workDir string) *EditFileTool {
+	return &EditFileTool{
+		workDir: workDir,
+	}
+}
 
 // Description implements [BaseTool].
 func (e *EditFileTool) Description() *schema.ToolDefinition {
@@ -50,7 +57,28 @@ type editFileArgs struct {
 
 // Exec implements [BaseTool].
 func (e *EditFileTool) Exec(ctx context.Context, args json.RawMessage) (string, error) {
-	return "", nil
+	var input editFileArgs
+	if err := json.Unmarshal(args, &input); err != nil {
+		return "", fmt.Errorf("参数解析失败: %w", err)
+	}
+	fullPath := filepath.Join(e.workDir, input.Path)
+	// 1. 读取原文件内容
+	contentBytes, err := os.ReadFile(fullPath)
+	if err != nil {
+		return "", fmt.Errorf("读取文件失败，请确认路径是否正确: %w", err)
+	}
+	originalContent := string(contentBytes)
+	// 2. 调用多级模糊替换算法
+	newContent, err := fuzzyReplace(originalContent, input.OldText, input.NewText)
+	if err != nil {
+		// 【驾驭哲学】将具体的报错原因 (如匹配到多处) 原样返回，让大模型自行纠正
+		return "", err
+	}
+	// 3. 将新内容安全地写回磁盘
+	if err := os.WriteFile(fullPath, []byte(newContent), 0644); err != nil {
+		return "", fmt.Errorf("写回文件失败: %w", err)
+	}
+	return fmt.Sprintf("✅ 成功修改文件: %s", input.Path), nil
 }
 
 // Name implements [BaseTool].
@@ -61,7 +89,6 @@ func (e *EditFileTool) Name() string {
 func fuzzyReplace(originalContent, oldText, newText string) (string, error) {
 	count := strings.Count(originalContent, oldText)
 
-	
 	if count == 1 {
 		return strings.Replace(originalContent, oldText, newText, 1), nil
 	}
@@ -70,5 +97,70 @@ func fuzzyReplace(originalContent, oldText, newText string) (string, error) {
 		return "", fmt.Errorf("old_text 匹配到了 %d 处，请提供更多的上下文代码以确保唯一性", count)
 	}
 
+	// 换行符归一化
+	normalizedContent := strings.ReplaceAll(originalContent, "\r\n", "\n")
+	normalizedOld := strings.ReplaceAll(oldText, "\r\n", "\n")
 
+	count = strings.Count(normalizedContent, normalizedOld)
+
+	if count == 1 {
+		return strings.Replace(normalizedContent, normalizedOld, newText, 1), nil
+	}
+
+	trimmedOld := strings.TrimSpace(normalizedOld)
+
+	if trimmedOld != "" {
+		count = strings.Count(normalizedContent, trimmedOld)
+		if count == 1 {
+			// 注意：这里替换时，我们只能替换被 Trim 后的部分，不能直接用 newText 破坏原本的缩进
+			// 为了保持本专栏代码不过于冗长复杂，当触发 L3/L4 时，如果 newText 没有带有正确的缩进，，
+			// 可能会导致替换后代码格式不美观。但这总比直接报错让 Agent 死循环要好。
+			return strings.Replace(normalizedContent, trimmedOld, newText, 1), nil
+		}
+	}
+	// L4: 逐行去缩进匹配 (最强力的容错：消除大模型遗漏缩进的幻觉)
+	return lineBylineReplace(normalizedContent, normalizedOld, newText)
+}
+
+func lineBylineReplace(content, oldText, newText string) (string, error) {
+	contentLines := strings.Split(content, "\n")
+	oldLines := strings.Split(strings.TrimSpace(oldText), "\n")
+	if len(oldLines) == 0 || len(contentLines) < len(oldLines) {
+		return "", fmt.Errorf("找不到该代码片段")
+	}
+	// 清理 oldLines 的每行首尾空白
+	for i := range oldLines {
+		oldLines[i] = strings.TrimSpace(oldLines[i])
+	}
+	matchCount := 0
+	matchStartIndex := -1
+	matchEndIndex := -1
+	// 滑动窗口在原始文件中寻找匹配块
+	for i := 0; i <= len(contentLines)-len(oldLines); i++ {
+		isMatch := true
+		for j := 0; j < len(oldLines); j++ {
+			if strings.TrimSpace(contentLines[i+j]) != oldLines[j] {
+				isMatch = false
+				break
+			}
+		}
+		if isMatch {
+			matchCount++
+			matchStartIndex = i
+			matchEndIndex = i + len(oldLines)
+		}
+	}
+	if matchCount == 0 {
+		return "", fmt.Errorf("在文件中未找到 old_text，请大模型先调用 read_file 仔细确认文件内容和缩进")
+	}
+	if matchCount > 1 {
+		return "", fmt.Errorf("模糊匹配到了 %d 处相似代码，请提供更多上下行代码以精确定位", matchCount)
+	}
+	// 执行替换：将匹配到的原始行范围替换为 newText 拆分后的行
+	// (这里简单处理，将 newText 直接作为整体替换进去)
+	var newContentLines []string
+	newContentLines = append(newContentLines, contentLines[:matchStartIndex]...)
+	newContentLines = append(newContentLines, newText) // 插入新内容
+	newContentLines = append(newContentLines, contentLines[matchEndIndex:]...)
+	return strings.Join(newContentLines, "\n"), nil
 }
