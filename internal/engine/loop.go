@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 	"tiny-claw/internal/provider"
 	"tiny-claw/internal/schema"
 	"tiny-claw/internal/tools"
-
 )
 
 type AgentEngine struct {
@@ -74,17 +74,19 @@ func (engine *AgentEngine) Run(ctx context.Context, input string, reporter Repor
 		ch := make(chan indexedResult, 2)
 		timeoutCtx, cancel  := context.WithTimeout(ctx, 30 * time.Second)
 		defer cancel()
-		engine.callTools(timeoutCtx, ch, result.ToolCalls)
+		engine.callTools(timeoutCtx, ch, result.ToolCalls, reporter)
 		toolResults := make([]*schema.ToolResult, len(result.ToolCalls))
 		loop: for {
 			select{
-			case r := <-ch:
+			case r, ok := <-ch:
+				if !ok {
+					break loop
+				}
 				toolResults[r.index] = &r.result
 			case <-timeoutCtx.Done():
 				break loop
 			}
 		}
-		defer close(ch)
 		for _, tool := range toolResults {
 			history = append(history, schema.MessageWithTools(tool.Output, tool.ToolCallID))
 		}
@@ -92,9 +94,11 @@ func (engine *AgentEngine) Run(ctx context.Context, input string, reporter Repor
 	return nil
 }
 
-func (e *AgentEngine) callTools(ctx context.Context, ch chan<- indexedResult, tools []*schema.ToolCall) {
-	defer ctx.Done()
-
+func (e *AgentEngine) callTools(ctx context.Context, ch chan<- indexedResult, tools []*schema.ToolCall, reporter Reporter) {
+	var wg sync.WaitGroup
+	defer func ()  {
+		wg.Wait()
+	}()
 	// 信号量， 最大并发量2
 	sem := make(chan struct{}, 2)
 	// 调用工具
@@ -104,11 +108,16 @@ func (e *AgentEngine) callTools(ctx context.Context, ch chan<- indexedResult, to
 		case <-ctx.Done():
 			return
 		}
+		wg.Add(1)
 		// 这里不传call参数，在新版本的go中没有问题， 但是在1.22之前， 可能会出现执行的工具都是最后一次调用。
 		go func(index int, call *schema.ToolCall) {
+			defer wg.Done()
 			defer func () {
 				<-sem
 			}()
+			if reporter != nil {
+				reporter.OnToolCall(ctx, call.Name, string(call.Arguments))
+			}
 			toolResult := e.registry.Exec(ctx, call)
 			// 是否成功
 			if toolResult.IsError {
@@ -116,14 +125,27 @@ func (e *AgentEngine) callTools(ctx context.Context, ch chan<- indexedResult, to
 			} else {
 				log.Printf(" -> ✅ 工具执行成功 (返回 %d 字节)\n", len(toolResult.Output))
 			}
-			ch <- indexedResult{
+			if reporter != nil {
+				reporter.OnToolResult(ctx, call.Name, toolResult.Output, toolResult.IsError)
+			}
+			select{
+			case ch <- indexedResult{
 				index: index,
 				result: toolResult,
+			}:
+			case <-ctx.Done():
 			}
+			
 		}(i, call)
 	}
 }
 
+var wg sync.WaitGroup
+
 func ClazzToSchema() {
-	
+	wg.Go(func() {
+		fmt.Println("1111")
+	})
+
+	wg.Wait()
 }
