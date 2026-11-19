@@ -6,6 +6,7 @@ import (
 	"log"
 	"sync"
 	"time"
+	ctxpkg "tiny-claw/internal/context"
 	"tiny-claw/internal/provider"
 	"tiny-claw/internal/schema"
 	"tiny-claw/internal/tools"
@@ -16,6 +17,7 @@ type AgentEngine struct {
 	registry       tools.Registry
 	WorkDir        string
 	EnableThinking bool
+	composer       *ctxpkg.PromptComposer
 }
 
 func NewAgentEngine(p provider.LLMProvider, registry tools.Registry, workDir string, enableThinking bool) *AgentEngine {
@@ -24,18 +26,19 @@ func NewAgentEngine(p provider.LLMProvider, registry tools.Registry, workDir str
 		registry:       registry,
 		WorkDir:        workDir,
 		EnableThinking: enableThinking,
+		composer:       ctxpkg.NewPromptComposer(workDir),
 	}
 }
 
 type indexedResult struct {
-	index int
+	index  int
 	result schema.ToolResult
 }
 
 func (engine *AgentEngine) Run(ctx context.Context, input string, reporter Reporter) error {
 	log.Println("starting agent engine")
 	history := []*schema.Message{
-		schema.SystemMessage("You are Shaosheng LIU, an expert coding assistant. You have full access to tools in the workspace."),
+		engine.composer.Build(),
 		schema.UserMessage(input),
 	}
 
@@ -72,12 +75,13 @@ func (engine *AgentEngine) Run(ctx context.Context, input string, reporter Repor
 		}
 
 		ch := make(chan indexedResult, 2)
-		timeoutCtx, cancel  := context.WithTimeout(ctx, 30 * time.Second)
+		timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		engine.callTools(timeoutCtx, ch, result.ToolCalls, reporter)
 		toolResults := make([]*schema.ToolResult, len(result.ToolCalls))
-		loop: for {
-			select{
+	loop:
+		for {
+			select {
 			case r, ok := <-ch:
 				if !ok {
 					break loop
@@ -96,14 +100,14 @@ func (engine *AgentEngine) Run(ctx context.Context, input string, reporter Repor
 
 func (e *AgentEngine) callTools(ctx context.Context, ch chan<- indexedResult, tools []*schema.ToolCall, reporter Reporter) {
 	var wg sync.WaitGroup
-	defer func ()  {
+	defer func() {
 		wg.Wait()
 	}()
 	// 信号量， 最大并发量2
 	sem := make(chan struct{}, 2)
 	// 调用工具
 	for i, call := range tools {
-		select{
+		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
 			return
@@ -112,7 +116,7 @@ func (e *AgentEngine) callTools(ctx context.Context, ch chan<- indexedResult, to
 		// 这里不传call参数，在新版本的go中没有问题， 但是在1.22之前， 可能会出现执行的工具都是最后一次调用。
 		go func(index int, call *schema.ToolCall) {
 			defer wg.Done()
-			defer func () {
+			defer func() {
 				<-sem
 			}()
 			if reporter != nil {
@@ -128,14 +132,14 @@ func (e *AgentEngine) callTools(ctx context.Context, ch chan<- indexedResult, to
 			if reporter != nil {
 				reporter.OnToolResult(ctx, call.Name, toolResult.Output, toolResult.IsError)
 			}
-			select{
+			select {
 			case ch <- indexedResult{
-				index: index,
+				index:  index,
 				result: toolResult,
 			}:
 			case <-ctx.Done():
 			}
-			
+
 		}(i, call)
 	}
 }

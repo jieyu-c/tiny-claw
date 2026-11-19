@@ -58,19 +58,18 @@ func (o *OpenAI) Generate(ctx context.Context, messages []*schema.Message, tools
 	var resultTools []*schema.ToolCall
 
 	openaiToolCalls := choice.ToolCalls
-	for _, tool  := range openaiToolCalls {
+	for _, tool := range openaiToolCalls {
 		if tool.Type == "function" {
 			resultTools = append(resultTools, &schema.ToolCall{
-				ID: tool.ID,
-				Name: tool.Function.Name,
+				ID:        tool.ID,
+				Name:      tool.Function.Name,
 				Arguments: json.RawMessage(tool.Function.Arguments),
 			})
 		}
 	}
-	
+
 	resultMsg := schema.AssistantMessage(choice.Content, resultTools)
 
-	
 	return resultMsg, nil
 }
 

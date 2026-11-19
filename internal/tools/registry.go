@@ -47,8 +47,8 @@ func (r *registryImpl) Exec(ctx context.Context, call *schema.ToolCall) (result 
 	if err != nil {
 		return schema.ToolResult{
 			ToolCallID: call.ID,
-			Output: err.Error(),
-			IsError: true,
+			Output:     err.Error(),
+			IsError:    true,
 		}
 	}
 	result.IsError = false

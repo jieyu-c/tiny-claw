@@ -1,6 +1,6 @@
 package engine_test
 
-import(
+import (
 	"testing"
 	"tiny-claw/internal/engine"
 )

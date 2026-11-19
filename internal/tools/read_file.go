@@ -10,7 +10,7 @@ import (
 	"tiny-claw/internal/schema"
 )
 
-const maxLen = 5000;
+const maxLen = 5000
 
 type ReadFileTool struct {
 	workDir string

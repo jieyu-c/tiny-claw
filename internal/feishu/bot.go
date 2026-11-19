@@ -50,7 +50,7 @@ func (b *FeishuBot) GetEventDispatcher() *dispatcher.EventDispatcher {
 			contentStr = strings.TrimSuffix(contentStr, `"}`)
 			chatId := *event.Event.Message.ChatId
 			log.Printf("[Feishu] 收到会话 %s 消息: %s\n", chatId, contentStr)
-				// 【驾驭并发】：收到消息后，绝不能阻塞 HTTP 回调。
+			// 【驾驭并发】：收到消息后，绝不能阻塞 HTTP 回调。
 			// 我们要为每个请求开启一个独立的 Goroutine 跑 Agent 任务
 
 			go b.handleAgentRun(chatId, contentStr)

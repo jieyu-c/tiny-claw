@@ -2,7 +2,6 @@ package engine
 
 import "context"
 
-
 type Reporter interface {
 	// 思考的时候
 	OnThinking(ctx context.Context)

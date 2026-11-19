@@ -1,4 +1,4 @@
-package context
+package ctxpkg
 
 import (
 	"fmt"
@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/adrg/frontmatter"
 )
 
 type Skill struct {
@@ -62,29 +64,25 @@ func (s *SkillLoader) LoadAll() string {
 	return skillsBuilder.String()
 }
 
+type skillDescription struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+}
+
 func parseSkillMD(content string) Skill {
 	skill := Skill{
 		Name:        "Unknown Skill",
 		Description: "No description provided.",
 		Body:        content, // 默认将全量内容作为 body
 	}
-	// 简单解析 YAML Frontmatter (以 --- 包裹)
-	if strings.HasPrefix(content, "---\n") || strings.HasPrefix(content, "---\r\n") {
-		parts := strings.SplitN(content, "---", 3)
-		if len(parts) == 3 {
-			frontmatter := parts[1]
-			skill.Body = strings.TrimSpace(parts[2])
-			// 逐行提取 metadata
-			lines := strings.Split(frontmatter, "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if strings.HasPrefix(line, "name:") {
-					skill.Name = strings.TrimSpace(strings.TrimPrefix(line, "name:"))
-				} else if strings.HasPrefix(line, "description:") {
-					skill.Description = strings.TrimSpace(strings.TrimPrefix(line, "description:"))
-				}
-			}
-		}
+
+	var skillDesc skillDescription
+	if rest, err := frontmatter.Parse(strings.NewReader(content), &skillDesc); err != nil {
+		// log.Printf("解析失败, %w\n", err)
+	} else {
+		log.Println(string(rest))
 	}
+	skill.Name = skillDesc.Name
+	skill.Description = skillDesc.Description
 	return skill
 }
