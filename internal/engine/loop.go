@@ -15,18 +15,18 @@ import (
 type AgentEngine struct {
 	provider       provider.LLMProvider
 	registry       tools.Registry
-	WorkDir        string
 	EnableThinking bool
-	composer       *ctxpkg.PromptComposer
+	compactor      *ctxpkg.Compactor
+	PlanMode       bool
 }
 
-func NewAgentEngine(p provider.LLMProvider, registry tools.Registry, workDir string, enableThinking bool) *AgentEngine {
+func NewAgentEngine(p provider.LLMProvider, registry tools.Registry, enableThinking bool, planMode bool) *AgentEngine {
 	return &AgentEngine{
 		provider:       p,
 		registry:       registry,
-		WorkDir:        workDir,
 		EnableThinking: enableThinking,
-		composer:       ctxpkg.NewPromptComposer(workDir),
+		PlanMode:       planMode,
+		compactor:      ctxpkg.NewCompactor(3000, 10),
 	}
 }
 
@@ -35,35 +35,41 @@ type indexedResult struct {
 	result schema.ToolResult
 }
 
-func (engine *AgentEngine) Run(ctx context.Context, input string, reporter Reporter) error {
+func (engine *AgentEngine) Run(ctx context.Context, session *Session, reporter Reporter) error {
 	log.Println("starting agent engine")
-	history := []*schema.Message{
-		engine.composer.Build(),
-		schema.UserMessage(input),
-	}
-
+	composer := ctxpkg.NewPromptComposer(session.WorkDir, engine.PlanMode)
 	turnCount := 0
 
 	for {
+		memory := session.GetWorkingMemory(10)
+		history := []*schema.Message{
+			composer.Build(),
+		}
+		history = append(history, memory...)
+
+		compactedContext := engine.compactor.Compact(history)
 		if engine.EnableThinking {
 			if reporter != nil {
 				reporter.OnThinking(ctx)
 			}
-			thinkingResult, err := engine.provider.Generate(ctx, history, nil)
+			thinkingResult, err := engine.provider.Generate(ctx, compactedContext, nil)
 			if err != nil {
 				log.Println(err)
 				return fmt.Errorf("engine thinking failed: %w", err)
 			}
 			if thinkingResult.Content != "" {
-				history = append(history, thinkingResult)
+				compactedContext = append(compactedContext, thinkingResult)
 			}
 		}
 		turnCount++
-		tools := engine.registry.GetAvailableTools()
-		result, err := engine.provider.Generate(ctx, history, tools)
+		availableTools := engine.registry.GetAvailableTools()
+		result, err := engine.provider.Generate(ctx, compactedContext, availableTools)
 		if err != nil {
 			return fmt.Errorf("模型生成失败: %w", err)
 		}
+
+		compactedContext = append(compactedContext, result)
+		session.Append(result)
 
 		if result.Content != "" && reporter != nil {
 			reporter.OnMessage(ctx, result.Content)
@@ -76,7 +82,6 @@ func (engine *AgentEngine) Run(ctx context.Context, input string, reporter Repor
 
 		ch := make(chan indexedResult, 2)
 		timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
 		engine.callTools(timeoutCtx, ch, result.ToolCalls, reporter)
 		toolResults := make([]*schema.ToolResult, len(result.ToolCalls))
 	loop:
@@ -92,8 +97,11 @@ func (engine *AgentEngine) Run(ctx context.Context, input string, reporter Repor
 			}
 		}
 		for _, tool := range toolResults {
-			history = append(history, schema.MessageWithTools(tool.Output, tool.ToolCallID))
+			withTools := schema.MessageWithTools(tool.Output, tool.ToolCallID)
+			history = append(history, withTools)
+			session.Append(withTools)
 		}
+		cancel()
 	}
 	return nil
 }

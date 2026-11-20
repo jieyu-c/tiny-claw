@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	ctxpkg "tiny-claw/internal/context"
 	engine2 "tiny-claw/internal/engine"
 	"tiny-claw/internal/provider"
 	"tiny-claw/internal/tools"
@@ -25,7 +26,7 @@ func main() {
 	r.Registry(tools.NewEditFileTool(workDir))
 
 	// TODO 3. 初始化上下文
-	// ctx := context.NewManager(...)§
+	ctxpkg.NewSkillLoader()
 	// TODO 4. 初始化执行引擎
 	engine := engine2.NewAgentEngine(p, r, workDir, true)
 	prompt := `
